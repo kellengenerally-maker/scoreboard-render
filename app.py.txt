@@ -1,0 +1,106 @@
+import requests
+from datetime import datetime
+import pytz
+from flask import Flask, Response
+
+app = Flask(__name__)
+
+USER_TZ = pytz.timezone("America/Chicago")
+TODAY = datetime.now(USER_TZ).date()
+
+def as_local(dt_string):
+    try:
+        dt = datetime.fromisoformat(dt_string.replace("Z", "+00:00"))
+        local = dt.astimezone(USER_TZ)
+        return (
+            local.strftime("%a %b %d"),
+            local.strftime("%I:%M %p").lstrip("0"),
+            local.date()
+        )
+    except:
+        return None, None, None
+
+
+# -------------------------
+# NBA
+# -------------------------
+def fetch_nba():
+    url = "https://www.balldontlie.io/api/v1/games?per_page=100"
+    games = requests.get(url).json().get("data", [])
+    
+    out = "NBA\n"
+    
+    for g in games:
+        date, time, game_date = as_local(g["date"])
+        if game_date != TODAY:
+            continue
+
+        home = g["home_team"]["abbreviation"]
+        away = g["visitor_team"]["abbreviation"]
+        hs = g["home_team_score"]
+        as_ = g["visitor_team_score"]
+        status = g["status"]
+
+        out += f"{away} {as_} @ {home} {hs} ({status})\n"
+        out += f"{time}\n"
+    
+    return out if out.strip() != "NBA" else "NBA\nNo games\n"
+
+
+# -------------------------
+# CBB (ESPN w/ ranks)
+# -------------------------
+def fetch_cbb():
+    url = "https://site.api.espn.com/apis/v2/sports/basketball/mens-college-basketball/scoreboard"
+    data = requests.get(url).json()
+    events = data.get("events", [])
+    
+    out = "CBB\n"
+    
+    for game in events:
+        date, time, game_date = as_local(game["date"])
+        if game_date != TODAY:
+            continue
+
+        comp = game["competitions"][0]["competitors"]
+
+        # away team
+        away = comp[1]["team"]
+        away_rank = comp[1].get("curatedRank", {}).get("current", "")
+        away_disp = (f"#{away_rank} " if away_rank not in ("0","") else "") + away["abbreviation"]
+        away_score = comp[1].get("score", "0")
+
+        # home team
+        home = comp[0]["team"]
+        home_rank = comp[0].get("curatedRank", {}).get("current", "")
+        home_disp = (f"#{home_rank} " if home_rank not in ("0","") else "") + home["abbreviation"]
+        home_score = comp[0].get("score", "0")
+
+        status = game["status"]["type"]["shortDetail"]
+
+        out += f"{away_disp} {away_score} @ {home_disp} {home_score} ({status})\n"
+        out += f"{time}\n"
+
+    return out if out.strip() != "CBB" else "CBB\nNo games\n"
+
+
+# -------------------------
+# Web Page
+# -------------------------
+@app.route("/")
+def index():
+    page = f"""
+<meta http-equiv="refresh" content="60">
+<pre style="font-size:14px; white-space: pre-wrap;">
+SCOREBOARD (AUTO)
+
+{fetch_nba()}
+
+{fetch_cbb()}
+</pre>
+"""
+    return Response(page, mimetype="text/html")
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
